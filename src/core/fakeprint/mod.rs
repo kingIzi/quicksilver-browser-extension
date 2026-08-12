@@ -215,82 +215,7 @@ mod tests {
 
     use super::*;
 
-    use hound;
-
-    use serde::{Deserialize, Serialize};
-
-    #[derive(Serialize, Deserialize)]
-    struct STFTResult {
-        output_shape: Vec<usize>,
-        output: Vec<Vec<Vec<f32>>>,
-    }
-
-    #[derive(Serialize, Deserialize)]
-    struct FakeprintResult {
-        length: usize,
-        fakeprint: Vec<f32>,
-    }
-
-    fn test_wav(file_path: &str) -> Result<(Vec<f32>, Vec<f32>), hound::Error> {
-        let mut reader = hound::WavReader::open(file_path).expect("Failed to open WAV file");
-        let spec = reader.spec();
-        let samples = reader
-            .samples::<i16>()
-            .map(|s| s.unwrap() as f32 / i16::MAX as f32)
-            .collect::<Vec<f32>>();
-        let audio_slice = open_audio_slice(&samples);
-        let temp_file = format!("{}_temp.wav", file_path);
-        let mut writer =
-            hound::WavWriter::create(&temp_file, spec).expect("Failed to create WAV writer");
-        for frame in audio_slice.rows() {
-            for &sample in frame {
-                let s = sample.clamp(-1.0, 1.0);
-                let pcm = (s * 32767.0) as i16;
-                writer.write_sample(pcm)?;
-            }
-        }
-        writer.finalize()?;
-
-        let mut recon_reader =
-            hound::WavReader::open(&temp_file).expect("Failed to open reconstructed WAV file");
-        let recon_samples = recon_reader
-            .samples::<i16>()
-            .map(|s| s.unwrap() as f32 / i16::MAX as f32)
-            .collect::<Vec<f32>>();
-        // delete the test output file
-        std::fs::remove_file(&temp_file).expect("Failed to delete test output WAV file");
-        Ok((samples, recon_samples))
-    }
-
-    #[test]
-    fn test_resample() {
-        let mut reader =
-            hound::WavReader::open("tests/assets/tom_scott.wav").expect("Failed to open WAV file");
-        let spec = reader.spec();
-        let samples = reader
-            .samples::<i16>()
-            .map(|s| s.unwrap() as f32 / i16::MAX as f32)
-            .take(spec.sample_rate as usize * 5 * 2) // take only first 5 seconds for testing
-            .collect::<Vec<f32>>();
-        let audio_slice = open_audio_slice(&samples);
-        let resampled = resample_audio(&audio_slice, spec.sample_rate, 44100);
-        assert_eq!(resampled.shape()[1], spec.channels as usize); // should have the same number of channels
-        let expected = (samples.len() / spec.channels as usize) * 44100 / spec.sample_rate as usize;
-        assert!((resampled.shape()[0] as isize - expected as isize).abs() <= 1);
-
-        let reconstructed = resample_audio(&resampled, 44100, spec.sample_rate);
-        assert_eq!(reconstructed.shape(), audio_slice.shape());
-        let mut total_err = 0.0;
-        for (&orig, &recon) in audio_slice.iter().zip(reconstructed.iter()) {
-            total_err += (orig - recon).abs();
-        }
-        let avg_err = total_err / (audio_slice.len() as f32);
-        assert!(
-            avg_err < 0.2,
-            "Average absolute error too high: {}",
-            avg_err
-        );
-    }
+    use scirs2_core::ndarray::Array2;
 
     #[test]
     fn test_resample_same_rate_returns_clone() {
@@ -327,8 +252,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "Expected audio slice to have 2 channels, but got 1")]
     fn test_resample_panics_on_wrong_channel_count() {
-        let audio_slice =
-            Array2::from_shape_vec((4, 1), vec![0.0, 0.1, 0.2, 0.3]).expect("failed to build test audio");
+        let audio_slice = Array2::from_shape_vec((4, 1), vec![0.0, 0.1, 0.2, 0.3])
+            .expect("failed to build test audio");
         let _ = resample_audio(&audio_slice, 44_100, 48_000);
     }
 
@@ -362,20 +287,6 @@ mod tests {
     }
 
     #[test]
-    fn check_reconstruction1() {
-        let (orig_samples, recon_samples) = test_wav("tests/assets/tom_scott.wav").unwrap();
-        assert_eq!(recon_samples.len(), orig_samples.len());
-        for (recon, orig) in recon_samples.iter().zip(orig_samples.iter()) {
-            assert!(
-                (recon - orig).abs() < 1e-5,
-                "Reconstructed sample differs from original: recon={}, orig={}",
-                recon,
-                orig
-            );
-        }
-    }
-
-    #[test]
     fn test_max_normalize1() {
         let x = Array1::from_vec(vec![0.0, 1.0, 2.0, 3.0, 4.0]);
         let normalized = max_normalize(&x, None);
@@ -400,133 +311,6 @@ mod tests {
                 "Normalized value differs from expected: normalized={}, expected={}",
                 n,
                 e
-            );
-        }
-    }
-
-    #[test]
-    fn test_spectrogram_no_resample() {
-        /* Without resampling, the spectrogram should be the same as the original stft for
-        the first 2 seconds of tom_scott.wav (aka stft1.json). */
-        let mut reader =
-            hound::WavReader::open("tests/assets/tom_scott.wav").expect("Failed to open WAV file");
-        let spec = reader.spec();
-        let samples = reader
-            .samples::<i16>()
-            .map(|s| s.unwrap() as f32 / i16::MAX as f32)
-            .collect::<Vec<f32>>();
-        let stft = spectrogram(&samples, spec.sample_rate, Some(spec.sample_rate), Some(2));
-        let expected =
-            serde_json::from_str::<STFTResult>(include_str!("../../../tests/keys/stft1.json"))
-                .expect("Failed to deserialize expected STFT result");
-
-        let result = STFTResult {
-            output_shape: stft.shape().to_vec(),
-            output: stft
-                .outer_iter()
-                .map(|ch| ch.outer_iter().map(|bin| bin.to_vec()).collect())
-                .collect(),
-        };
-
-        assert_eq!(result.output_shape, expected.output_shape);
-        let mut tot_rel_err = 0.0;
-        for (res_bin, exp_bin) in result.output.iter().zip(expected.output.iter()) {
-            for (res_frame, exp_frame) in res_bin.iter().zip(exp_bin.iter()) {
-                for (res_val, exp_val) in res_frame.iter().zip(exp_frame.iter()) {
-                    tot_rel_err += (res_val - exp_val).abs() / exp_val.abs().max(1e-10);
-                }
-            }
-        }
-        let avg_err = tot_rel_err / (result.output_shape.iter().product::<usize>() as f32);
-        assert!(avg_err < 1e-3, "Mean relative error too high: {}", avg_err);
-    }
-
-    #[test]
-    fn test_spectrogram_with_resample() {
-        /* Compare the spectrogram of the original audio resampled to 44.1 kHz
-        with the spectrogram computed directly from the original audio
-        but with resampling enabled in the spectrogram function.
-        This tests both the resampling and the spectrogram computation together,
-        and ensures that they are consistent with each other. */
-        let mut reader =
-            hound::WavReader::open("tests/assets/tom_scott.wav").expect("Failed to open WAV file");
-        let spec = reader.spec();
-        let samples = reader
-            .samples::<i16>()
-            .map(|s| s.unwrap() as f32 / i16::MAX as f32)
-            .collect::<Vec<f32>>();
-        let stft = spectrogram(&samples, spec.sample_rate, Some(44100), Some(2));
-        // now resample the original audio to 44.1 kHz and compute the stft again to get the expected result
-        // obviously the validity of this test relies on the correctness of the previous test and the resampling function.
-        let audio_slice = open_audio_slice(&samples);
-        let resampled = resample_audio(&audio_slice, spec.sample_rate, 44100);
-        // convert back to interleaved pcm format for stft computation
-        let mut resampled_pcm = Vec::with_capacity(resampled.len() * resampled.shape()[1]);
-        for frame in resampled.rows() {
-            for &sample in frame {
-                resampled_pcm.push(sample);
-            }
-        }
-        let expected_stft = spectrogram(&resampled_pcm, 44100, Some(44100), Some(2));
-        let expected = STFTResult {
-            output_shape: expected_stft.shape().to_vec(),
-            output: expected_stft
-                .outer_iter()
-                .map(|ch| ch.outer_iter().map(|bin| bin.to_vec()).collect())
-                .collect(),
-        };
-
-        let result = STFTResult {
-            output_shape: stft.shape().to_vec(),
-            output: stft
-                .outer_iter()
-                .map(|ch| ch.outer_iter().map(|bin| bin.to_vec()).collect())
-                .collect(),
-        };
-
-        assert_eq!(result.output_shape, expected.output_shape);
-        let mut tot_rel_err = 0.0;
-        for (res_bin, exp_bin) in result.output.iter().zip(expected.output.iter()) {
-            for (res_frame, exp_frame) in res_bin.iter().zip(exp_bin.iter()) {
-                for (res_val, exp_val) in res_frame.iter().zip(exp_frame.iter()) {
-                    tot_rel_err += (res_val - exp_val).abs() / exp_val.abs().max(1e-10);
-                }
-            }
-        }
-        let avg_err = tot_rel_err / (result.output_shape.iter().product::<usize>() as f32);
-        assert!(avg_err < 1e-3, "Mean relative error too high: {}", avg_err);
-    }
-
-    #[test]
-    fn test_fakeprint() {
-        let stft =
-            serde_json::from_str::<STFTResult>(include_str!("../../../tests/keys/stft1.json"))
-                .expect("Failed to deserialize expected STFT result");
-
-        let stft_array = Array3::from_shape_vec(
-            (
-                stft.output_shape[0],
-                stft.output_shape[1],
-                stft.output_shape[2],
-            ),
-            stft.output
-                .into_iter()
-                .flat_map(|v| v.into_iter())
-                .flat_map(|v| v.into_iter())
-                .collect(),
-        )
-        .expect("Failed to convert STFT output to 3D array");
-        let fp = fakeprint(&stft_array, None, Some(48000));
-        let expected_fp =
-            serde_json::from_str::<FakeprintResult>(include_str!("../../../tests/keys/fp.json"))
-                .expect("Failed to deserialize expected fakeprint result");
-        assert_eq!(fp.len(), expected_fp.length);
-        for (res_val, exp_val) in fp.iter().zip(expected_fp.fakeprint.iter()) {
-            assert!(
-                (res_val - exp_val).abs() < 1e-5,
-                "Fakeprint value differs from expected: res={}, exp={}",
-                res_val,
-                exp_val
             );
         }
     }

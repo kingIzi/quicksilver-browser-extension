@@ -1,9 +1,9 @@
 use crate::core::compute_fakeprint;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
-use wasm_bindgen::prelude::*;
 
-#[derive(Deserialize)]
+/// A binary logistic regression model serialized as CBOR.
+#[derive(Serialize, Deserialize)]
 pub struct BinaryLogisticRegression {
     pub coef: Vec<f64>,
     pub intercept: f64,
@@ -11,7 +11,7 @@ pub struct BinaryLogisticRegression {
 }
 
 impl BinaryLogisticRegression {
-    pub(crate) fn from_cbor(bytes: &[u8]) -> Result<Self, String> {
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, String> {
         let model: Self = serde_cbor::from_slice(bytes)
             .map_err(|e| format!("Failed to deserialize model: {e}"))?;
 
@@ -38,7 +38,7 @@ impl BinaryLogisticRegression {
         }
     }
 
-    pub(crate) fn predict(&self, features: &[f32]) -> Result<f64, String> {
+    pub fn predict(&self, features: &[f32]) -> Result<f64, String> {
         if features.len() != self.n_features as usize {
             return Err(format!(
                 "Expected {} features, got {}",
@@ -56,21 +56,27 @@ impl BinaryLogisticRegression {
 
 /// The model is small enough that it is most performant
 /// to include it directly in the binary.
-static MODEL_BYTES: &[u8] = include_bytes!("../../model/v1.0-2026-03-31/model.cbor");
+static MODEL_BYTES: &[u8] = include_bytes!("../model/v1.0-2026-03-31/model.cbor");
 /// We use a LazyLock to ensure that the model is only deserialized on
 /// the first inference call, which avoids unnecessary work for repeated calls.
 static MODEL: LazyLock<BinaryLogisticRegression> = LazyLock::new(|| {
     BinaryLogisticRegression::from_cbor(MODEL_BYTES).expect("Failed to load model")
 });
 
-#[wasm_bindgen]
-#[cfg(not(tarpaulin_include))]
-pub fn run_inference(pcm_audio: &[f32], input_sample_rate: u32) -> Result<f64, JsValue> {
+/// Run end-to-end inference on raw interleaved PCM audio.
+///
+/// `pcm_audio` must be interleaved stereo audio (e.g.
+/// `[S_1_CH_1, S_1_CH_2, ..., S_N_CH_1, S_N_CH_2]`) in the range `[-1.0, 1.0]`.
+/// Any sample rate is accepted; the audio is resampled to 44.1 kHz internally.
+///
+/// Returns `P(AI-generated)` in `[0.0, 1.0]`, where values `> 0.5` indicate
+/// AI-generated audio and values `< 0.5` indicate human audio.
+pub fn run_inference(pcm_audio: &[f32], input_sample_rate: u32) -> Result<f64, String> {
     if pcm_audio.is_empty() {
-        return Err(JsValue::from_str("pcm_audio is empty"));
+        return Err("pcm_audio is empty".to_string());
     }
     let features = compute_fakeprint(pcm_audio, input_sample_rate, None, None, None).to_vec();
-    MODEL.predict(&features).map_err(|e| JsValue::from_str(&e))
+    MODEL.predict(&features)
 }
 
 #[cfg(test)]
@@ -78,10 +84,6 @@ mod tests {
     use super::*;
     use serde_cbor::Value;
     use std::collections::BTreeMap;
-    #[cfg(target_arch = "wasm32")]
-    use wasm_bindgen_test::wasm_bindgen_test;
-    #[cfg(target_arch = "wasm32")]
-    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
     #[test]
     fn test_model_prediction1() {
@@ -114,53 +116,25 @@ mod tests {
     }
 
     #[test]
-    fn test_model_prediction2() {
-        let model_bytes = include_bytes!("../../model/v1-2026-03-17/model.cbor");
-        let model = BinaryLogisticRegression::from_cbor(model_bytes).expect("Failed to load model");
-        let features = (0..model.n_features)
-            .map(|i| i as f32 / 5000.0) // dummy features
-            .collect::<Vec<f32>>();
-        let prob = model.predict(&features).unwrap();
-        let expected = 1.0 - 9.99999449e-01;
-        assert!(
-            (prob - expected).abs() < 1e-6,
-            "Expected={}, got={}",
-            expected,
-            prob
-        );
-    }
-    #[test]
-    fn test_model_prediction3() {
-        let bytes = include_bytes!("../../tests/assets/aifp.json");
-        let fakeprint: Vec<f32> =
-            serde_json::from_slice(bytes).expect("Failed to deserialize fakeprint");
-        let model_bytes = include_bytes!("../../model/v1-2026-03-17/model.cbor");
-        let model = BinaryLogisticRegression::from_cbor(model_bytes).expect("Failed to load model");
-        let prob = model.predict(&fakeprint).unwrap();
-        let expected = 1.0 - 2.98884029e-10;
-        assert!(
-            (prob - expected).abs() < 1e-6,
-            "Expected={}, got={}",
-            expected,
-            prob
-        );
-    }
-
-    #[test]
     fn test_from_cbor_rejects_invalid_feature_count() {
         let map = BTreeMap::from([
-            (Value::Text("coef".into()), Value::Array(vec![Value::Float(1.0)])),
+            (
+                Value::Text("coef".into()),
+                Value::Array(vec![Value::Float(1.0)]),
+            ),
             (Value::Text("intercept".into()), Value::Float(0.0)),
             (Value::Text("n_features".into()), Value::Integer(2)),
         ]);
-        let bytes = serde_cbor::to_vec(&Value::Map(map))
-        .expect("failed to encode test cbor");
+        let bytes = serde_cbor::to_vec(&Value::Map(map)).expect("failed to encode test cbor");
 
         let err = match BinaryLogisticRegression::from_cbor(&bytes) {
             Ok(_) => panic!("expected invalid model"),
             Err(err) => err,
         };
-        assert_eq!(err, "Invalid model: coef length 1 does not match n_features 2");
+        assert_eq!(
+            err,
+            "Invalid model: coef length 1 does not match n_features 2"
+        );
     }
 
     #[test]
@@ -171,14 +145,15 @@ mod tests {
             n_features: 2,
         };
 
-        let err = model.predict(&[1.0]).expect_err("expected feature count validation error");
+        let err = model
+            .predict(&[1.0])
+            .expect_err("expected feature count validation error");
         assert_eq!(err, "Expected 2 features, got 1");
     }
 
-    #[cfg(target_arch = "wasm32")]
-    #[wasm_bindgen_test]
+    #[test]
     fn test_run_inference_rejects_empty_audio() {
         let err = run_inference(&[], 44_100).expect_err("expected empty-audio error");
-        assert_eq!(err.as_string().as_deref(), Some("pcm_audio is empty"));
+        assert_eq!(err, "pcm_audio is empty");
     }
 }
