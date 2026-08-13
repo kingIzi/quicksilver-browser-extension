@@ -14,6 +14,7 @@ scirs2-core = "0.3.1"
 scirs2-interpolate = "0.3.1"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_cbor = "0.11.2"
+symphonia = { version = "0.6.1", default-features = false, features = ["mp3"] }
 
 [dev-dependencies]
 hound = "3.5.1"

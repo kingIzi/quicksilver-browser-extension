@@ -1,43 +1,16 @@
-use hound;
-use quicksilver::run_inference;
+use quicksilver::{audio::decode_audio, run_inference};
 use std::path::{Path, PathBuf};
 
-/// Read a 16-bit stereo PCM WAV file into interleaved f32 samples in [-1.0, 1.0].
-fn read_wav(path: &Path) -> (Vec<f32>, u32) {
-    let mut reader = hound::WavReader::open(path).expect("Failed to open WAV file");
-    let spec = reader.spec();
-    assert!(
-        spec.channels == 2,
-        "{}: must have 2 channels, got {} instead",
-        path.display(),
-        spec.channels
-    );
-    assert!(
-        spec.bits_per_sample == 16,
-        "{}: must be 16-bit audio, got {} bits per sample instead",
-        path.display(),
-        spec.bits_per_sample
-    );
-    assert!(
-        spec.sample_format == hound::SampleFormat::Int,
-        "{}: must be PCM audio, got {:?} instead",
-        path.display(),
-        spec.sample_format
-    );
-    let samples = reader
-        .samples::<i16>()
-        .map(|s| s.unwrap() as f32 / i16::MAX as f32)
-        .collect::<Vec<f32>>();
-    (samples, spec.sample_rate)
-}
-
-/// Collect and sort all .wav files in a directory.
-fn collect_wavs(dir: &Path) -> Vec<PathBuf> {
+/// Collect and sort all supported audio files (.wav and .mp3) in a directory.
+fn collect_audio(dir: &Path) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
         .unwrap_or_else(|e| panic!("Failed to read {}: {}", dir.display(), e))
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| p.extension().map_or(false, |e| e == "wav"))
+        .filter(|p| {
+            p.extension()
+                .map_or(false, |e| e.eq_ignore_ascii_case("wav") || e.eq_ignore_ascii_case("mp3"))
+        })
         .collect();
     files.sort();
     files
@@ -52,7 +25,8 @@ struct SampleResult {
 
 fn evaluate_file(path: &Path, expected_ai: bool) -> SampleResult {
     let name = path.file_name().unwrap().to_string_lossy().to_string();
-    let (samples, sample_rate) = read_wav(path);
+    let (samples, sample_rate) =
+        decode_audio(path).unwrap_or_else(|e| panic!("Failed to decode {}: {e}", path.display()));
     let prob = run_inference(&samples, sample_rate).expect("Inference failed");
     let predicted_ai = prob > 0.5;
     let correct = predicted_ai == expected_ai;
@@ -72,7 +46,7 @@ fn evaluate_group(label: &str, dir: &Path, expected_ai: bool) -> Vec<SampleResul
     );
     println!(" {}", "-".repeat(78));
 
-    let files = collect_wavs(dir);
+    let files = collect_audio(dir);
     let mut results = Vec::with_capacity(files.len());
     for file in &files {
         let r = evaluate_file(file, expected_ai);
