@@ -1,0 +1,22 @@
+[project]
+name = "minzoto-ai"
+version = "0.1.0"
+description = "A collection of Deep Learning functions for Minzoto"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "mux-python",
+]
+
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+module-name = "minzoto_ai._core"
+python-source = "python"
+manifest-path = "../Cargo.toml"
+
+[tool.uv.sources]
+mux-python = { git = "https://github.com/muxinc/mux-python.git" }

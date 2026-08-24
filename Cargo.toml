@@ -4,9 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [lib]
-crate-type = ["rlib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+curl = "0.4.50"
 hound = "3.5.1"
 realfft = "3.5.0"
 rubato = "0.16.2"
@@ -14,7 +15,9 @@ scirs2-core = "0.3.1"
 scirs2-interpolate = "0.3.1"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_cbor = "0.11.2"
-symphonia = { version = "0.6.1", default-features = false, features = ["mp3"] }
+symphonia = { version = "0.6.1", default-features = false, features = ["mp3", "isomp4", "aac"] }
+pyo3 = { version = "0.24", features = ["extension-module", "abi3-py310"] }
+serde_json = "1.0.151"
 
 [dev-dependencies]
 hound = "3.5.1"
