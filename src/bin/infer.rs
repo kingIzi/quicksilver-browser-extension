@@ -1,5 +1,12 @@
-use quicksilver::{audio::decode_audio_source, run_inference};
+// Native-only CLI. On wasm builds this compiles to an empty stub: the real
+// pipeline depends on std::fs and curl, which don't exist in the browser.
+#[cfg(target_family = "wasm")]
+fn main() {}
 
+#[cfg(not(target_family = "wasm"))]
+use quicksilver::{audio::decode_audio_source, pyo3_port::run_inference};
+
+#[cfg(not(target_family = "wasm"))]
 fn main() {
     let input = std::env::args().nth(1).unwrap_or_else(|| {
         eprintln!("Usage: cargo run --release --bin infer -- <input.wav|input.mp3|http(s)://...>");

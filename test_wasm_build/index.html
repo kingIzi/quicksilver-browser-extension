@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Quicksilver — MGM Detector (WASM test)</title>
+    <link rel="stylesheet" href="style.css" />
+</head>
+<!--
+    NOTE: this page must be served over HTTP, not opened via file://
+    (the WASM glue uses ES modules + fetch). From this folder run:
+
+        python -m http.server 8000
+
+    and open http://localhost:8000
+-->
+<body>
+    <main class="card">
+        <h1>Quicksilver <span class="badge-title">WASM test harness</span></h1>
+        <p class="subtitle">
+            Pick an audio file (<code>.wav</code> / <code>.mp3</code> / <code>.m4a</code>)
+            to check whether it was made by generative music (MGM).
+        </p>
+
+        <label class="file-picker" for="file-input">
+            <svg class="icon" viewBox="0 0 24 24" width="28" height="28" fill="none"
+                 stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 18V6l10-2v12" />
+                <circle cx="6" cy="18" r="3" />
+                <circle cx="19" cy="16" r="3" />
+            </svg>
+            <span id="picker-text">Choose audio file</span>
+        </label>
+        <input id="file-input" type="file" accept=".wav,.mp3,.m4a,.mp4,.m4b,audio/*" hidden />
+
+        <p id="status" class="status" role="status">Loading model…</p>
+
+        <section id="result" class="result" hidden aria-live="polite">
+            <div id="verdict" class="verdict">—</div>
+            <div class="confidence-row">
+                <div class="confidence-bar" aria-hidden="true">
+                    <div id="confidence-fill" class="confidence-fill"></div>
+                </div>
+                <span id="confidence-text" class="confidence-text">0%</span>
+            </div>
+            <dl class="meta">
+                <div><dt>File</dt><dd id="meta-file">—</dd></div>
+                <div><dt>Size</dt><dd id="meta-size">—</dd></div>
+                <div><dt>Sample rate</dt><dd id="meta-rate">—</dd></div>
+                <div><dt>Inference time</dt><dd id="meta-time" class="mono">—</dd></div>
+            </dl>
+        </section>
+    </main>
+
+    <script type="module" src="main.js"></script>
+</body>
+</html>

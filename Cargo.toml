@@ -7,17 +7,31 @@ edition = "2024"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-curl = "0.4.50"
 hound = "3.5.1"
 realfft = "3.5.0"
 rubato = "0.16.2"
-scirs2-core = "0.3.1"
-scirs2-interpolate = "0.3.1"
+# 0.3.4+ enable the getrandom 0.3/0.4 "wasm_js" backend on wasm32 targets,
+# which older patch releases (0.3.1) do not.
+scirs2-core = "0.3.4"
+scirs2-interpolate = "0.3.4"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_cbor = "0.11.2"
 symphonia = { version = "0.6.1", default-features = false, features = ["mp3", "isomp4", "aac"] }
-pyo3 = { version = "0.24", features = ["extension-module", "abi3-py310"] }
 serde_json = "1.0.151"
+
+# Native-only: the Python extension module and the libcurl-based downloader
+# (neither pyo3 nor curl-sys can compile for wasm32-unknown-unknown).
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+curl = "0.4.50"
+pyo3 = { version = "0.24", features = ["extension-module", "abi3-py310"] }
+
+# Browser-only: wasm-bindgen bindings, plus the "js" feature for the
+# transitive getrandom 0.2 (statrs -> rand 0.8 tree), which otherwise hits a
+# compile_error! on wasm32-unknown-unknown.
+[target.'cfg(target_family = "wasm")'.dependencies]
+wasm-bindgen = "0.2.129"
+serde-wasm-bindgen = "0.6"
+getrandom = { version = "0.2", features = ["js"] }
 
 [dev-dependencies]
 hound = "3.5.1"
